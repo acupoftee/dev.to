@@ -11,12 +11,28 @@ export function previewArticle(payload, successCb, failureCb) {
     }),
     credentials: 'same-origin',
   })
-    .then(response => response.json())
+    .then((response) => response.json())
     .then(successCb)
     .catch(failureCb);
 }
 
 export function getArticle() {}
+
+function processPayload(payload) {
+  const {
+    /* eslint-disable no-unused-vars */
+    previewShowing,
+    helpShowing,
+    previewResponse,
+    helpHTML,
+    imageManagementShowing,
+    moreConfigShowing,
+    errors,
+    /* eslint-enable no-unused-vars */
+    ...neededPayload
+  } = payload;
+  return neededPayload;
+}
 
 export function submitArticle(payload, clearStorage, errorCb, failureCb) {
   const method = payload.id ? 'PUT' : 'POST';
@@ -29,17 +45,18 @@ export function submitArticle(payload, clearStorage, errorCb, failureCb) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      article: payload,
+      article: processPayload(payload),
     }),
     credentials: 'same-origin',
   })
-    .then(response => response.json())
-    .then(response => {
+    .then((response) => response.json())
+    .then((response) => {
       if (response.current_state_path) {
         clearStorage();
         window.location.replace(response.current_state_path);
       } else {
-        errorCb(response);
+        // If there is an error and the method is POST, we know they are trying to publish.
+        errorCb(response, method === 'POST');
       }
     })
     .catch(failureCb);
@@ -69,8 +86,8 @@ export function generateMainImage(payload, successCb, failureCb) {
     body: generateUploadFormdata(payload),
     credentials: 'same-origin',
   })
-    .then(response => response.json())
-    .then(json => {
+    .then((response) => response.json())
+    .then((json) => {
       if (json.error) {
         throw new Error(json.error);
       }

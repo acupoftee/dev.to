@@ -1,19 +1,12 @@
 json.array! @articles do |article|
-  json.type_of            "article"
-  json.id                 article.id
-  json.title              article.title
-  json.description        article.description
-  json.cover_image        cloud_cover_url(article.main_image)
-  json.published_at       article.published_at
-  json.tag_list           article.cached_tag_list_array
-  json.slug               article.slug
-  json.path               article.path
-  json.url                article.url
-  json.canonical_url      article.processed_canonical_url
-  json.comments_count     article.comments_count
-  json.positive_reactions_count article.positive_reactions_count
-  json.published_timestamp article.published_timestamp
-  json.collection_id      article.collection_id
+  json.partial! "article", article: article
+
+  # /api/articles and /api/articles/:id have opposite representations
+  # of `tag_list` and `tags and we can't align them without breaking the API,
+  # this is fully documented in the API docs
+  # see <https://github.com/thepracticaldev/dev.to/issues/4206> for more details
+  json.tag_list article.cached_tag_list_array
+  json.tags article.cached_tag_list
 
   json.partial! "api/v0/shared/user", user: article.user
 

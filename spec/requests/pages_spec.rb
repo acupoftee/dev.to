@@ -16,26 +16,84 @@ RSpec.describe "Pages", type: :request do
       expect(response.body).not_to include("/page/#{page.slug}")
       expect(response.body).to include("stories-show")
     end
+
+    context "when json template" do
+      let(:json_text) { "{\"foo\": \"bar\"}" }
+      let(:page) do
+        create(:page, title: "sample_data", template: "json", body_json: json_text, body_html: nil, body_markdown: nil)
+      end
+
+      before do
+        page.save! # Trigger processing of page.body_html
+      end
+
+      it "returns json data " do
+        get "/page/#{page.slug}"
+
+        expect(response.media_type).to eq("application/json")
+        expect(response.body).to include(json_text)
+      end
+
+      it "returns json data for top level template" do
+        page.is_top_level_path = true
+        page.save!
+        get "/#{page.slug}"
+
+        expect(response.media_type).to eq("application/json")
+        expect(response.body).to include(json_text)
+      end
+    end
   end
 
   describe "GET /about" do
     it "has proper headline" do
       get "/about"
-      expect(response.body).to include("About dev.to")
+      expect(response.body).to include("About")
+    end
+  end
+
+  describe "GET /about-listings" do
+    it "has proper headline" do
+      get "/about-listings"
+      expect(response.body).to include("About #{SiteConfig.community_name} Listings")
+    end
+  end
+
+  describe "GET /community-moderation" do
+    it "has proper headline" do
+      get "/community-moderation"
+      expect(response.body).to include("Community Moderation Guide")
+    end
+  end
+
+  describe "GET /tag-moderation" do
+    it "has proper headline" do
+      get "/tag-moderation"
+      expect(response.body).to include("Tag Moderation Guide")
+    end
+  end
+
+  describe "GET /page/post-a-job" do
+    it "has proper headline" do
+      get "/page/post-a-job"
+      expect(response.body).to include("Posting a Job on #{SiteConfig.community_name} Listings")
     end
   end
 
   describe "GET /api" do
     it "redirects to the API docs" do
       get "/api"
-      expect(response.body).to redirect_to("https://docs.dev.to/api")
+      expect(response.body).to redirect_to("https://docs.forem.com/api")
     end
   end
 
   describe "GET /privacy" do
     it "has proper headline" do
+      allow(SiteConfig).to receive(:shop_url).and_return("some-shop-url")
       get "/privacy"
       expect(response.body).to include("Privacy Policy")
+      expect(response.body).to include(SiteConfig.shop_url)
+      expect(response.body).to include("#{SiteConfig.community_name} Shop")
     end
   end
 
@@ -49,7 +107,7 @@ RSpec.describe "Pages", type: :request do
   describe "GET /security" do
     it "has proper headline" do
       get "/security"
-      expect(response.body).to include("Reporting Vulnerabilities to dev.to")
+      expect(response.body).to include("Reporting Vulnerabilities")
     end
   end
 
@@ -57,20 +115,6 @@ RSpec.describe "Pages", type: :request do
     it "has proper headline" do
       get "/code-of-conduct"
       expect(response.body).to include("Code of Conduct")
-    end
-  end
-
-  describe "GET /rly" do
-    it "has proper headline" do
-      get "/rly"
-      expect(response.body).to include("O RLY Cover Generator")
-    end
-  end
-
-  describe "GET /sponsorship-info" do
-    it "has proper headline" do
-      get "/sponsorship-info"
-      expect(response.body).to include("Sponsorship Information")
     end
   end
 
@@ -98,6 +142,25 @@ RSpec.describe "Pages", type: :request do
     end
   end
 
+  describe "GET /checkin" do
+    let(:user) { create(:user, username: "codenewbiestaff") }
+
+    it "redirects to the latest CodeNewbie staff thread" do
+      earlier_staff_thread = create(:article, user: user, tags: "staff")
+      earlier_staff_thread.update(published_at: 1.week.ago)
+      latest_staff_thread = create(:article, user: user, tags: "staff")
+      get "/checkin"
+
+      expect(response.body).to redirect_to(latest_staff_thread.path)
+    end
+
+    it "redirects to /notifications if there is no staff user post" do
+      get "/checkin"
+
+      expect(response.body).to redirect_to("/notifications")
+    end
+  end
+
   describe "GET /badge" do
     it "has proper headline" do
       html_variant = create(:html_variant, group: "badge_landing_page", published: true, approved: true)
@@ -106,11 +169,35 @@ RSpec.describe "Pages", type: :request do
     end
   end
 
-  describe "GET /live" do
-    context "when nothing is live" do
-      it "shows the correct message" do
-        get "/live"
-        expect(response.body).to include("We are working on more ways to bring live coding to the community")
+  describe "GET /robots.txt" do
+    it "has proper text" do
+      get "/robots.txt"
+
+      text = "Sitemap: https://#{ApplicationConfig['AWS_BUCKET_NAME']}.s3.amazonaws.com/sitemaps/sitemap.xml.gz"
+      expect(response.body).to include(text)
+    end
+  end
+
+  describe "GET /report-abuse" do
+    context "when provided the referer" do
+      it "prefills with the provided url" do
+        url = Faker::Internet.url
+        get "/report-abuse", headers: { referer: url }
+        expect(response.body).to include(url)
+      end
+
+      it "does not prefill if the provide url is /serviceworker.js" do
+        url = "https://dev.to/serviceworker.js"
+        get "/report-abuse", headers: { referer: url }
+        expect(response.body).not_to include(url)
+      end
+    end
+
+    context "when provided the params" do
+      it "prefills with the provided param url" do
+        url = "https://dev.to/serviceworker.js"
+        get "/report-abuse", params: { url: url }
+        expect(response.body).to include(url)
       end
     end
   end

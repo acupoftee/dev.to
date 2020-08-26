@@ -21,6 +21,7 @@ RSpec.describe "DisplayAdEvents", type: :request do
         }
         expect(display_ad.reload.clicks_count).to eq(1)
       end
+
       it "creates a display ad impression event" do
         post "/display_ad_events", params: {
           display_ad_event: {
@@ -31,25 +32,19 @@ RSpec.describe "DisplayAdEvents", type: :request do
         }
         expect(display_ad.reload.impressions_count).to eq(1)
       end
+
       it "creates a display ad success rate" do
+        ad_event_params = { display_ad_id: display_ad.id, context_type: "home" }
+
         4.times do
-          post "/display_ad_events", params: {
-            display_ad_event: {
-              display_ad_id: display_ad.id,
-              context_type: "home",
-              category: "impression"
-            }
-          }
+          post "/display_ad_events", params: { display_ad_event: ad_event_params.merge(category: "impression") }
         end
-        post "/display_ad_events", params: {
-          display_ad_event: {
-            display_ad_id: display_ad.id,
-            context_type: "home",
-            category: "click"
-          }
-        }
+
+        post "/display_ad_events", params: { display_ad_event: ad_event_params.merge(category: "click") }
+
         expect(display_ad.reload.success_rate).to eq(0.25)
       end
+
       it "assigns event to current user" do
         post "/display_ad_events", params: {
           display_ad_event: {

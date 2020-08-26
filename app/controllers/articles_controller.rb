@@ -3,18 +3,27 @@ class ArticlesController < ApplicationController
 
   before_action :authenticate_user!, except: %i[feed new]
   before_action :set_article, only: %i[edit manage update destroy stats]
-  before_action :raise_banned, only: %i[new create update]
+  before_action :raise_suspended, only: %i[new create update]
   before_action :set_cache_control_headers, only: %i[feed]
   after_action :verify_authorized
+
+  FEED_ALLOWED_TAGS = %w[
+    a b blockquote br center cite code col colgroup dd del div dl dt em em h1 h2
+    h3 h4 h5 h6 i iframe img li ol p pre q small span strong sup table tbody td
+    tfoot th thead time tr u ul
+  ].freeze
+
+  FEED_ALLOWED_ATTRIBUTES = %w[
+    alt class colspan data-conversation data-lang em height href id ref rel
+    rowspan size span src start strong title value width
+  ].freeze
+
+  RESTRICTED_LIQUID_TAGS = [UserSubscriptionTag].freeze
 
   def feed
     skip_authorization
 
-    @articles = Article.published.
-      select(:published_at, :processed_html, :user_id, :organization_id, :title, :path).
-      order(published_at: :desc).
-      page(params[:page].to_i).per(12)
-
+    @articles = Article.feed.order(published_at: :desc).page(params[:page].to_i).per(12)
     @articles = if params[:username]
                   handle_user_or_organization_feed
                 elsif params[:tag]
@@ -23,65 +32,46 @@ class ArticlesController < ApplicationController
                   @articles.where(featured: true).includes(:user)
                 end
 
-    unless @articles
-      render body: nil
-      return
+    unless @articles&.any?
+      not_found
     end
 
     set_surrogate_key_header "feed"
-    response.headers["Surrogate-Control"] = "max-age=600, stale-while-revalidate=30, stale-if-error=86400"
+    set_cache_control_headers(10.minutes.to_i, stale_while_revalidate: 30, stale_if_error: 1.day.to_i)
 
-    render layout: false
+    @allowed_tags = FEED_ALLOWED_TAGS
+    @allowed_attributes = FEED_ALLOWED_ATTRIBUTES
+
+    render layout: false, locals: {
+      articles: @articles,
+      user: @user,
+      tag: @tag,
+      allowed_tags: FEED_ALLOWED_TAGS,
+      allowed_attributes: FEED_ALLOWED_ATTRIBUTES
+    }
   end
 
   def new
     base_editor_assigments
-    @article = if @tag.present? && @user&.editor_version == "v2"
-                 authorize Article
-                 submission_template = @tag.submission_template_customized(@user.name).to_s
-                 Article.new(body_markdown: submission_template.split("---").last.to_s.strip, cached_tag_list: @tag.name,
-                             processed_html: "", user_id: current_user&.id, title: submission_template.split("title:")[1].to_s.split("\n")[0].to_s.strip)
-               elsif @tag&.submission_template.present? && @user
-                 authorize Article
-                 Article.new(body_markdown: @tag.submission_template_customized(@user.name),
-                             processed_html: "", user_id: current_user&.id)
-               elsif @prefill.present? && @user&.editor_version == "v2"
-                 authorize Article
-                 Article.new(body_markdown: @prefill.split("---").last.to_s.strip, cached_tag_list: @prefill.split("tags:")[1].to_s.split("\n")[0].to_s.strip,
-                             processed_html: "", user_id: current_user&.id, title: @prefill.split("title:")[1].to_s.split("\n")[0].to_s.strip)
-               elsif @prefill.present? && @user
-                 authorize Article
-                 Article.new(body_markdown: @prefill,
-                             processed_html: "", user_id: current_user&.id)
-               elsif @tag.present?
-                 skip_authorization
-                 Article.new(
-                   body_markdown: "---\ntitle: \npublished: false\ndescription: \ntags: #{@tag.name}\n---\n\n",
-                   processed_html: "", user_id: current_user&.id
-                 )
-               else
-                 skip_authorization
-                 if @user&.editor_version == "v2"
-                   Article.new(user_id: current_user&.id)
-                 else
-                   Article.new(
-                     body_markdown: "---\ntitle: \npublished: false\ndescription: \ntags: \n---\n\n",
-                     processed_html: "", user_id: current_user&.id
-                   )
-                 end
-               end
+
+    @article, needs_authorization = Articles::Builder.call(@user, @tag, @prefill)
+
+    needs_authorization ? authorize(Article) : skip_authorization
   end
 
   def edit
     authorize @article
+
     @version = @article.has_frontmatter? ? "v1" : "v2"
     @user = @article.user
     @organizations = @user&.organizations
+    set_user_approved_liquid_tags
   end
 
   def manage
-    @article = @article.decorate
     authorize @article
+
+    @article = @article.decorate
     @user = @article.user
     @rating_vote = RatingVote.where(article_id: @article.id, user_id: @user.id).first
     @buffer_updates = BufferUpdate.where(composer_user_id: @user.id, article_id: @article.id)
@@ -96,7 +86,7 @@ class ArticlesController < ApplicationController
     begin
       fixed_body_markdown = MarkdownFixer.fix_for_preview(params[:article_body])
       parsed = FrontMatterParser::Parser.new(:md).call(fixed_body_markdown)
-      parsed_markdown = MarkdownParser.new(parsed.content)
+      parsed_markdown = MarkdownParser.new(parsed.content, source: Article.new, user: current_user)
       processed_html = parsed_markdown.finalize
     rescue StandardError => e
       @article = Article.new(body_markdown: params[:article_body])
@@ -123,12 +113,12 @@ class ArticlesController < ApplicationController
     authorize Article
 
     @user = current_user
-    @article = Articles::Creator.call(@user, article_params_json)
+    article = Articles::Creator.call(@user, article_params_json)
 
-    render json: if @article.persisted?
-                   @article.to_json(only: [:id], methods: [:current_state_path])
+    render json: if article.persisted?
+                   { id: article.id, current_state_path: article.decorate.current_state_path }.to_json
                  else
-                   @article.errors.to_json
+                   article.errors.to_json
                  end
   end
 
@@ -158,7 +148,7 @@ class ArticlesController < ApplicationController
           return
         end
         if params[:article][:video_thumbnail_url]
-          redirect_to(@article.path + "/edit")
+          redirect_to("#{@article.path}/edit")
           return
         end
         render json: { status: 200 }
@@ -176,6 +166,7 @@ class ArticlesController < ApplicationController
 
   def delete_confirm
     @article = current_user.articles.find_by(slug: params[:slug])
+    not_found unless @article
     authorize @article
   end
 
@@ -202,33 +193,46 @@ class ArticlesController < ApplicationController
     @organizations = @user&.organizations
     @tag = Tag.find_by(name: params[:template])
     @prefill = params[:prefill].to_s.gsub("\\n ", "\n").gsub("\\n", "\n")
+    set_user_approved_liquid_tags
+  end
+
+  def set_user_approved_liquid_tags
+    @user_approved_liquid_tags =
+      if @user
+        RESTRICTED_LIQUID_TAGS.filter_map do |liquid_tag|
+          liquid_tag if liquid_tag::VALID_ROLES.any? { |role| @user.has_role?(*Array(role)) }
+        end
+      else
+        []
+      end
   end
 
   def handle_user_or_organization_feed
     if (@user = User.find_by(username: params[:username]))
+      Honeycomb.add_field("articles_route", "user")
       @articles = @articles.where(user_id: @user.id)
     elsif (@user = Organization.find_by(slug: params[:username]))
+      Honeycomb.add_field("articles_route", "org")
       @articles = @articles.where(organization_id: @user.id).includes(:user)
     end
   end
 
   def handle_tag_feed
-    tag = Tag.find_by(name: params[:tag].downcase)
+    @tag = Tag.aliased_name(params[:tag])
+    return unless @tag
 
-    return unless tag
-
-    @tag = tag.alias_for.presence || tag
     @articles = @articles.cached_tagged_with(@tag)
   end
 
   def set_article
     owner = User.find_by(username: params[:username]) || Organization.find_by(slug: params[:username])
-    found_article = if params[:slug]
+    found_article = if params[:slug] && owner
                       owner.articles.find_by(slug: params[:slug])
                     else
                       Article.includes(:user).find(params[:id])
                     end
     @article = found_article || not_found
+    Honeycomb.add_field("article_id", @article.id)
   end
 
   def article_params
@@ -279,22 +283,12 @@ class ArticlesController < ApplicationController
     if updated && @article.published && @article.saved_changes["published"] == [false, true]
       Notification.send_to_followers(@article, "Published")
     elsif @article.saved_changes["published"] == [true, false]
-      Notification.remove_all_by_action_without_delay(notifiable_ids: @article.id, notifiable_type: "Article", action: "Published")
-      Notification.remove_all(notifiable_ids: @article.comments.pluck(:id), notifiable_type: "Comment") if @article.comments.exists?
-    end
-  end
-
-  def redirect_after_creation
-    @article.decorate
-    if @article.persisted?
-      redirect_to @article.current_state_path, notice: "Article was successfully created."
-    else
-      if @article.errors.to_h[:body_markdown] == "has already been taken"
-        @article = current_user.articles.find_by(body_markdown: @article.body_markdown)
-        redirect_to @article.current_state_path
-        return
+      Notification.remove_all_by_action_without_delay(notifiable_ids: @article.id, notifiable_type: "Article",
+                                                      action: "Published")
+      if @article.comments.exists?
+        Notification.remove_all(notifiable_ids: @article.comments.ids,
+                                notifiable_type: "Comment")
       end
-      render :new
     end
   end
 
