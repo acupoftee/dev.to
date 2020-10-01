@@ -5,13 +5,14 @@ RSpec.describe Profile, type: :model do
     subject { create(:profile) }
 
     it { is_expected.to validate_uniqueness_of(:user_id) }
+    it { is_expected.to validate_presence_of(:data) }
   end
 
   context "when accessing profile fields" do
     before do
       create(:profile_field, label: "Test 1")
       create(:profile_field, label: "Test 2", input_type: :check_box)
-      described_class.refresh_store_accessors!
+      described_class.refresh_attributes!
     end
 
     let(:profile) { described_class.new }

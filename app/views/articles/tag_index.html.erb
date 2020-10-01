@@ -68,7 +68,7 @@
           </div>
         <% else %>
           <div class="flex-1 flex items-center justify-between">
-            <div class="crayons-notice w-100">👋 <a href="/enter">Sign in</a> for the ability sort posts by <strong>top</strong> and  <strong>latest</strong>.</div>
+            <div class="crayons-notice w-100">👋 <a href="<%= sign_up_path %>">Sign in</a> for the ability sort posts by <strong>top</strong> and  <strong>latest</strong>.</div>
           </div>
         <% end %>
 
@@ -93,6 +93,5 @@
     <%= render "articles/tags/sidebar_additional" %>
   </div>
 
-  <%= render "stories/narrow_nav_menu" %>
   <%= render "stories/stories_list_script" %>
 <% end %>

@@ -1,32 +1,30 @@
-<main>
-  <section class="row my-3" role="search">
-    <div class="col">
-      <ul class="nav nav-pills">
-        <li class="nav-item">
-          <%= link_to "General Community", admin_mods_path, class: "nav-link #{'active' if params[:state].blank?}" %>
-        </li>
-        <li class="nav-item">
-          <%= link_to "Tag Mods", admin_mods_path(state: :tag_moderator), class: "nav-link #{'active' if params[:state] == 'tag_moderator'}" %>
-        </li>
-        <li class="nav-item">
-          <%= link_to "Potential Mods", admin_mods_path(state: :potential), class: "nav-link #{'active' if params[:state] == 'potential'}" %>
-        </li>
-      </ul>
-    </div>
-    <div class="col">
-      <%= form_with url: admin_mods_path, method: :get, local: true, class: "form-inline justify-content-end" do |f| %>
-        <div class="form-group mx-sm-3">
-          <%= f.text_field :search, value: params[:search], class: "form-control", aria: { label: "Search" } %>
-          <%= f.hidden_field :state, value: params[:state] if params[:state].present? %>
-        </div>
-        <%= f.submit "Search", class: "btn btn-light" %>
-      <% end %>
-    </div>
-  </section>
+<div class="mb-6 flex items-center">
+  <ul class="nav nav-pills">
+    <li class="nav-item">
+      <%= link_to "General Community", admin_mods_path, class: "nav-link #{'active' if params[:state].blank?}" %>
+    </li>
+    <li class="nav-item">
+      <%= link_to "Tag Mods", admin_mods_path(state: :tag_moderator), class: "nav-link #{'active' if params[:state] == 'tag_moderator'}" %>
+    </li>
+    <li class="nav-item">
+      <%= link_to "Potential Mods", admin_mods_path(state: :potential), class: "nav-link #{'active' if params[:state] == 'potential'}" %>
+    </li>
+  </ul>
 
+  <%= form_with url: admin_mods_path, method: :get, local: true, class: "form-inline ml-auto" do |f| %>
+    <div class="form-group mx-sm-3">
+      <%= f.text_field :search, value: params[:search], class: "form-control", aria: { label: "Search" } %>
+      <%= f.hidden_field :state, value: params[:state] if params[:state].present? %>
+    </div>
+    <%= f.submit "Search", class: "btn btn-light" %>
+  <% end %>
+</div>
+<% if @mods.empty? %>
+    <div class="alert alert-warning">There are no mods matching your search criteria.</div>
+<% else %>
   <%= paginate @mods, theme: "internal" %>
 
-  <table class="table">
+  <table class="crayons-table" width="100%">
     <thead>
       <tr>
         <th scope="col">ID</th>
@@ -39,7 +37,7 @@
         <% end %>
       </tr>
     </thead>
-    <tbody>
+    <tbody class="crayons-card">
       <% @mods.each do |mod| %>
         <tr>
           <td><%= mod.id %></td>
@@ -60,4 +58,4 @@
   </table>
 
   <%= paginate @mods, theme: "internal" %>
-</main>
+<% end %>

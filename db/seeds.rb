@@ -30,6 +30,21 @@ SEEDS_MULTIPLIER = [1, ENV["SEEDS_MULTIPLIER"].to_i].max
 puts "Seeding with multiplication factor: #{SEEDS_MULTIPLIER}\n\n"
 
 ##############################################################################
+# Default development site config if different from production scenario
+
+SiteConfig.public = true
+SiteConfig.waiting_on_first_user = false
+
+##############################################################################
+
+# Put forem into "starter mode"
+
+if ENV["MODE"] == "STARTER"
+  SiteConfig.public = false
+  SiteConfig.waiting_on_first_user = true
+  puts "Seeding forem in starter mode to replicate new creator experience"
+  exit # We don't need any models if we're launching things from startup.
+end
 
 seeder.create_if_none(Organization) do
   3.times do
@@ -203,7 +218,7 @@ seeder.create_if_none(Podcast) do
       main_color_hex: "2faa4a",
       overcast_url: "https://overcast.fm/itunes919219256/codenewbie",
       android_url: "https://subscribeonandroid.com/feeds.podtrac.com/q8s8ba9YtM6r",
-      image: Rack::Test::UploadedFile.new(image_file, "image/jpeg"),
+      image: Pathname.new(image_file).open,
       published: true
     },
     {
@@ -216,7 +231,7 @@ seeder.create_if_none(Podcast) do
       main_color_hex: "111111",
       overcast_url: "https://overcast.fm/itunes769189585/coding-blocks",
       android_url: "http://subscribeonandroid.com/feeds.podtrac.com/c8yBGHRafqhz",
-      image: Rack::Test::UploadedFile.new(image_file, "image/jpeg"),
+      image: Pathname.new(image_file).open,
       published: true
     },
     {
@@ -229,7 +244,7 @@ seeder.create_if_none(Podcast) do
       main_color_hex: "181a1c",
       overcast_url: "https://overcast.fm/itunes979020229/talk-python-to-me",
       android_url: "https://subscribeonandroid.com/talkpython.fm/episodes/rss",
-      image: Rack::Test::UploadedFile.new(image_file, "image/jpeg"),
+      image: Pathname.new(image_file).open,
       published: true
     },
     {
@@ -243,7 +258,7 @@ seeder.create_if_none(Podcast) do
       main_color_hex: "343d46",
       overcast_url: "https://overcast.fm/itunes1006105326/developer-on-fire",
       android_url: "http://subscribeonandroid.com/developeronfire.com/rss.xml",
-      image: Rack::Test::UploadedFile.new(image_file, "image/jpeg"),
+      image: Pathname.new(image_file).open,
       published: true
     },
   ]
@@ -326,7 +341,7 @@ seeder.create_if_none(ChatChannel) do
     )
   end
 
-  direct_channel = ChatChannel.create_with_users(users: User.last(2), channel_type: "direct")
+  direct_channel = ChatChannels::CreateWithUsers.call(users: User.last(2), channel_type: "direct")
   Message.create!(
     chat_channel: direct_channel,
     user: User.last,
@@ -472,6 +487,7 @@ seeder.create_if_none(Listing) do
         listing_category_id: category_id,
         contact_via_connect: true,
         published: true,
+        originally_published_at: Time.current,
         bumped_at: Time.current,
         tag_list: Tag.order(Arel.sql("RANDOM()")).first(2).pluck(:name),
       )
@@ -511,6 +527,20 @@ seeder.create_if_none(ProfileField) do
   coding_fields_csv = Rails.root.join("lib/data/coding_profile_fields.csv")
   ProfileFields::ImportFromCsv.call(coding_fields_csv)
   ProfileFields::AddBrandingFields.call
+end
+
+##############################################################################
+
+seeder.create_if_none(Sponsorship) do
+  organizations = Organization.take(3)
+  organizations.each do |organization|
+    Sponsorship.create!(
+      organization: organization,
+      user: User.order(Arel.sql("RANDOM()")).first,
+      level: "silver",
+      blurb_html: Faker::Hacker.say_something_smart,
+    )
+  end
 end
 
 ##############################################################################

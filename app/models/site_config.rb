@@ -4,6 +4,8 @@
 class SiteConfig < RailsSettings::Base
   self.table_name = "site_configs"
 
+  validates :var, presence: true
+
   # the site configuration is cached, change this if you want to force update
   # the cache, or call SiteConfig.clear_cache
   cache_prefix { "v1" }
@@ -11,11 +13,16 @@ class SiteConfig < RailsSettings::Base
   STACK_ICON = File.read(Rails.root.join("app/assets/images/stack.svg")).freeze
   LIGHTNING_ICON = File.read(Rails.root.join("app/assets/images/lightning.svg")).freeze
 
+  # Core setup
+  field :waiting_on_first_user, type: :boolean, default: !User.exists?
+  field :app_domain, type: :string, default: ApplicationConfig["APP_DOMAIN"]
+
   # API Tokens
   field :health_check_token, type: :string
 
   # Authentication
-  field :authentication_providers, type: :array, default: Authentication::Providers.available
+  field :allow_email_password_registration, type: :boolean, default: false
+  field :authentication_providers, type: :array, default: proc { Authentication::Providers.available }
   field :twitter_key, type: :string, default: ApplicationConfig["TWITTER_KEY"]
   field :twitter_secret, type: :string, default: ApplicationConfig["TWITTER_SECRET"]
   field :github_key, type: :string, default: ApplicationConfig["GITHUB_KEY"]
@@ -58,9 +65,8 @@ class SiteConfig < RailsSettings::Base
   field :jobs_url, type: :string
   field :display_jobs_banner, type: :boolean, default: false
 
-  # Google Analytics Reporting API v4
-  # <https://developers.google.com/analytics/devguides/reporting/core/v4>
-  field :ga_view_id, type: :string, default: ""
+  # Google Analytics Tracking ID, e.g. UA-71991000-1
+  field :ga_tracking_id, type: :string, default: ApplicationConfig["GA_TRACKING_ID"]
 
   # Images
   field :main_social_image, type: :string
@@ -95,6 +101,7 @@ class SiteConfig < RailsSettings::Base
 
   # Newsletter
   # <https://mailchimp.com/developer/>
+  field :mailchimp_api_key, type: :string, default: ApplicationConfig["MAILCHIMP_API_KEY"]
   field :mailchimp_newsletter_id, type: :string, default: ""
   field :mailchimp_sustaining_members_id, type: :string, default: ""
   field :mailchimp_tag_moderators_id, type: :string, default: ""
@@ -147,9 +154,10 @@ class SiteConfig < RailsSettings::Base
   field :feed_style, type: :string, default: "basic"
   # a non-public forem will redirect all unauthenticated pages to the registration page.
   # a public forem could have more fine-grained authentication (listings ar private etc.) in future
-  field :public, type: :boolean, default: 1
+  field :public, type: :boolean, default: 0
   # The default font for all users that have not chosen a custom font yet
   field :default_font, type: :string, default: "sans_serif"
+  field :primary_brand_color_hex, type: :string, default: "#3b49df"
 
   # Broadcast
   field :welcome_notifications_live_at, type: :date
@@ -161,4 +169,9 @@ class SiteConfig < RailsSettings::Base
     large: 300,
     xlarge: 250
   }
+
+  # Returns true if we are operating on a local installation, false otherwise
+  def self.local?
+    app_domain.include?("localhost")
+  end
 end

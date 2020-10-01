@@ -8,7 +8,6 @@ class Article < ApplicationRecord
 
   SEARCH_SERIALIZER = Search::ArticleSerializer
   SEARCH_CLASS = Search::FeedContent
-  DATA_SYNC_CLASS = DataSync::Elasticsearch::Article
 
   acts_as_taggable_on :tags
   resourcify
@@ -19,60 +18,67 @@ class Article < ApplicationRecord
   delegate :name, to: :user, prefix: true
   delegate :username, to: :user, prefix: true
 
-  belongs_to :user
-  belongs_to :organization, optional: true
   # touch: true was removed because when an article is updated, the associated collection
   # is touched along with all its articles(including this one). This causes eventually a deadlock.
   belongs_to :collection, optional: true
 
+  belongs_to :organization, optional: true
+  belongs_to :user
+
   counter_culture :user
   counter_culture :organization
 
-  has_many :comments, as: :commentable, inverse_of: :commentable
+  has_many :buffer_updates, dependent: :destroy
+  has_many :comments, as: :commentable, inverse_of: :commentable, dependent: :nullify
+  has_many :html_variant_successes, dependent: :nullify
+  has_many :html_variant_trials, dependent: :nullify
+  has_many :notification_subscriptions, as: :notifiable, inverse_of: :notifiable, dependent: :destroy
+  has_many :notifications, as: :notifiable, inverse_of: :notifiable, dependent: :delete_all
+  has_many :page_views, dependent: :destroy
+  has_many :polls, dependent: :destroy
+  has_many :profile_pins, as: :pinnable, inverse_of: :pinnable, dependent: :destroy
+  has_many :rating_votes, dependent: :destroy
   has_many :top_comments,
            lambda {
-             where(
-               "comments.score > ? AND ancestry IS NULL and hidden_by_commentable_user is FALSE and deleted is FALSE",
-               10,
-             ).order("comments.score" => :desc)
+             where(comments: { score: 11.. }, ancestry: nil, hidden_by_commentable_user: false, deleted: false)
+               .order("comments.score" => :desc)
            },
            as: :commentable,
            inverse_of: :commentable,
            class_name: "Comment"
-  has_many :profile_pins, as: :pinnable, inverse_of: :pinnable
-  has_many :buffer_updates, dependent: :destroy
-  has_many :html_variant_successes, dependent: :nullify
-  has_many :html_variant_trials, dependent: :nullify
-  has_many :notifications, as: :notifiable, inverse_of: :notifiable, dependent: :delete_all
-  has_many :notification_subscriptions, as: :notifiable, inverse_of: :notifiable, dependent: :destroy
-  has_many :rating_votes
-  has_many :page_views
-  has_many :polls, dependent: :destroy
 
-  validates :slug, presence: { if: :published? }, format: /\A[0-9a-z\-_]*\z/,
-                   uniqueness: { scope: :user_id }
-  validates :title, presence: true,
-                    length: { maximum: 128 }
-  validates :user_id, presence: true
-  validates :feed_source_url, uniqueness: { allow_blank: true }
-  validates :canonical_url,
-            url: { allow_blank: true, no_local: true, schemes: %w[https http] },
-            uniqueness: { allow_blank: true }
   validates :body_markdown, length: { minimum: 0, allow_nil: false }, uniqueness: { scope: %i[user_id title] }
-  validate :validate_tag
-  validate :validate_video
-  validate :validate_collection_permission
-  validate :past_or_present_date
-  validate :canonical_url_must_not_have_spaces
-  validates :video_state, inclusion: { in: %w[PROGRESSING COMPLETED] }, allow_nil: true
+  validates :boost_states, presence: true
   validates :cached_tag_list, length: { maximum: 126 }
+  validates :canonical_url, uniqueness: { allow_nil: true }
+  validates :canonical_url, url: { allow_blank: true, no_local: true, schemes: %w[https http] }
+  validates :comments_count, presence: true
+  validates :feed_source_url, uniqueness: { allow_nil: true }
+  validates :feed_source_url, url: { allow_blank: true, no_local: true, schemes: %w[https http] }
   validates :main_image, url: { allow_blank: true, schemes: %w[https http] }
   validates :main_image_background_hex_color, format: /\A#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})\z/
+  validates :positive_reactions_count, presence: true
+  validates :previous_public_reactions_count, presence: true
+  validates :public_reactions_count, presence: true
+  validates :rating_votes_count, presence: true
+  validates :reactions_count, presence: true
+  validates :slug, presence: { if: :published? }, format: /\A[0-9a-z\-_]*\z/
+  validates :slug, uniqueness: { scope: :user_id }
+  validates :title, presence: true, length: { maximum: 128 }
+  validates :user_id, presence: true
+  validates :user_subscriptions_count, presence: true
   validates :video, url: { allow_blank: true, schemes: %w[https http] }
-  validates :video_source_url, url: { allow_blank: true, schemes: ["https"] }
-  validates :video_thumbnail_url, url: { allow_blank: true, schemes: %w[https http] }
   validates :video_closed_caption_track_url, url: { allow_blank: true, schemes: ["https"] }
   validates :video_source_url, url: { allow_blank: true, schemes: ["https"] }
+  validates :video_source_url, url: { allow_blank: true, schemes: ["https"] }
+  validates :video_state, inclusion: { in: %w[PROGRESSING COMPLETED] }, allow_nil: true
+  validates :video_thumbnail_url, url: { allow_blank: true, schemes: %w[https http] }
+
+  validate :canonical_url_must_not_have_spaces
+  validate :past_or_present_date
+  validate :validate_collection_permission
+  validate :validate_tag
+  validate :validate_video
 
   before_validation :evaluate_markdown, :create_slug
   before_save :update_cached_user
@@ -92,7 +98,6 @@ class Article < ApplicationRecord
                                                  }
   after_commit :async_score_calc, :update_main_image_background_hex, :touch_collection, on: %i[create update]
   after_commit :index_to_elasticsearch, on: %i[create update]
-  after_commit :sync_related_elasticsearch_docs, on: %i[create update]
   after_commit :remove_from_elasticsearch, on: [:destroy]
 
   serialize :cached_user
@@ -145,7 +150,7 @@ class Article < ApplicationRecord
            :video_thumbnail_url, :video_closed_caption_track_url, :social_image,
            :published_from_feed, :crossposted_at, :published_at, :featured_number,
            :last_buffered, :facebook_last_buffered, :created_at, :body_markdown,
-           :email_digest_eligible, :processed_html)
+           :email_digest_eligible, :processed_html, :second_user_id, :third_user_id)
   }
 
   scope :boosted_via_additional_articles, lambda {
@@ -355,17 +360,11 @@ class Article < ApplicationRecord
   end
 
   def video_duration_in_minutes
-    minutes = video_duration_in_minutes_integer
-    seconds = video_duration_in_seconds.to_i % 60
-    seconds = "0#{seconds}" if seconds.to_s.size == 1
+    duration = ActiveSupport::Duration.build(video_duration_in_seconds.to_i).parts
+    minutes_and_seconds = format("%<minutes>02d:%<seconds>02d", duration)
+    return minutes_and_seconds if duration[:hours] < 1
 
-    hours = (video_duration_in_seconds.to_i / 3600)
-    minutes = "0#{minutes}" if hours.positive? && minutes < 10
-    hours < 1 ? "#{minutes}:#{seconds}" : "#{hours}:#{minutes}:#{seconds}"
-  end
-
-  def video_duration_in_minutes_integer
-    (video_duration_in_seconds.to_i / 60) % 60
+    "#{duration[:hours]}:#{minutes_and_seconds}"
   end
 
   def update_score
@@ -430,6 +429,7 @@ class Article < ApplicationRecord
   end
 
   def update_main_image_background_hex
+    return unless saved_changes.key?("main_image")
     return if main_image.blank? || main_image_background_hex_color != "#dddddd"
 
     Articles::UpdateMainImageBackgroundHexWorker.perform_async(id)

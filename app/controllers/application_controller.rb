@@ -1,7 +1,9 @@
 class ApplicationController < ActionController::Base
+  before_action :configure_permitted_parameters, if: :devise_controller?
   skip_before_action :track_ahoy_visit
   before_action :verify_private_forem
   protect_from_forgery with: :exception, prepend: true
+  before_action :remember_cookie_sync
 
   include SessionCurrentUser
   include ValidRequest
@@ -9,6 +11,7 @@ class ApplicationController < ActionController::Base
   include CachingHeaders
   include ImageUploads
   include VerifySetupCompleted
+  include Devise::Controllers::Rememberable
 
   rescue_from ActionView::MissingTemplate, with: :routing_error
 
@@ -16,11 +19,20 @@ class ApplicationController < ActionController::Base
     error_too_many_requests(exc)
   end
 
-  PUBLIC_CONTROLLERS = %w[shell async_info ga_events].freeze
+  PUBLIC_CONTROLLERS = %w[shell
+                          async_info
+                          ga_events
+                          service_worker
+                          omniauth_callbacks
+                          registrations
+                          confirmations
+                          passwords
+                          health_checks].freeze
   private_constant :PUBLIC_CONTROLLERS
 
   def verify_private_forem
     return if controller_name.in?(PUBLIC_CONTROLLERS)
+    return if self.class.module_parent.to_s == "Admin"
     return if user_signed_in? || SiteConfig.public
 
     if api_action?
@@ -59,7 +71,7 @@ class ApplicationController < ActionController::Base
     end
 
     respond_to do |format|
-      format.html { redirect_to "/enter" }
+      format.html { redirect_to sign_up_path }
       format.json { render json: { error: "Please sign in" }, status: :unauthorized }
     end
   end
@@ -72,7 +84,7 @@ class ApplicationController < ActionController::Base
   # the user to after a successful log in
   def after_sign_in_path_for(resource)
     if current_user.saw_onboarding
-      path = request.env["omniauth.origin"] || stored_location_for(resource) || dashboard_path
+      path = stored_location_for(resource) || request.env["omniauth.origin"] || root_path(signin: "true")
       signin_param = { "signin" => "true" } # the "signin" param is used by the service worker
 
       uri = Addressable::URI.parse(path)
@@ -133,5 +145,21 @@ class ApplicationController < ActionController::Base
     return unless Rails.env.development? && Stripe.api_key.present?
 
     Stripe.log_level = Stripe::LEVEL_INFO
+  end
+
+  def remember_cookie_sync
+    # Set remember cookie token in case not properly set.
+    if user_signed_in? &&
+        cookies[:remember_user_token].blank?
+      current_user.remember_me = true
+      current_user.remember_me!
+      remember_me(current_user)
+    end
+  end
+
+  protected
+
+  def configure_permitted_parameters
+    devise_parameter_sanitizer.permit(:sign_up, keys: %i[username name profile_image profile_image_url])
   end
 end
